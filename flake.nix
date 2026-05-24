@@ -20,16 +20,17 @@
         # Default overlay (non-parameterized)
         default = final: prev:
           let
-            # Apply the upstream official overlay first to populate upstream llamaPackages
+            # Apply the upstream official overlay once
             upstream = llama-cpp.overlays.default final prev;
-            
-            # Evaluate our custom overlay with default empty configuration
+
+            # Pass llamaPackages to avoid redundant overlay evaluation
             customOverlay = import ./llama-cpp-overlay.nix {
               inputs = inputs // { llama-cpp = llama-cpp; };
               lib = nixpkgs.lib;
               config = {};
+              llamaPackages = upstream.llamaPackages;
             };
-            
+
             customPackages = customOverlay final prev;
           in
           upstream // customPackages;
@@ -38,13 +39,15 @@
         configure = configAttrs: final: prev:
           let
             upstream = llama-cpp.overlays.default final prev;
-            
+
+            # Pass llamaPackages to avoid redundant overlay evaluation
             customOverlay = import ./llama-cpp-overlay.nix {
               inputs = inputs // { llama-cpp = llama-cpp; };
               lib = nixpkgs.lib;
               config = configAttrs;
+              llamaPackages = upstream.llamaPackages;
             };
-            
+
             customPackages = customOverlay final prev;
           in
           upstream // customPackages;
@@ -60,9 +63,9 @@
             enable = lib.mkEnableOption "franken-llama custom LLM inference overlay and configuration";
 
             acceleration = lib.mkOption {
-              type = lib.types.enum [ "cpu" "cuda" "rocm" "vulkan" ];
+              type = lib.types.enum [ "cpu" "cuda" "rocm" "vulkan" "dual" ];
               default = "cpu";
-              description = "Hardware acceleration backend for llama.cpp.";
+              description = "Hardware acceleration backend for llama.cpp. Use 'dual' for combined CUDA + ROCm with dynamic backend loading.";
             };
 
             nativeCpu = lib.mkOption {
@@ -191,18 +194,22 @@
             llama-cpp-vulkan
             llama-cpp-cuda
             llama-cpp-rocm
+            llama-cpp-dual
             llama-cpp-cpu-native
             llama-cpp-vulkan-native
             llama-cpp-cuda-native
             llama-cpp-rocm-native
+            llama-cpp-dual-native
             llama-cpp-cpu-llguidance
             llama-cpp-vulkan-llguidance
             llama-cpp-cuda-llguidance
             llama-cpp-rocm-llguidance
+            llama-cpp-dual-llguidance
             llama-cpp-cpu-native-llguidance
             llama-cpp-vulkan-native-llguidance
             llama-cpp-cuda-native-llguidance
             llama-cpp-rocm-native-llguidance
+            llama-cpp-dual-native-llguidance
             llama-cpp
             llama-cpp-ui;
         }

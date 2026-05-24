@@ -3,15 +3,20 @@
 # This overlay provides a comprehensive set of `llama-cpp` packages using the
 # official `llama-cpp` flake. It provides standard builds and versions that are
 # additionally optimized for the host CPU's native instruction set (AVX, FMA, etc.).
+#
+# Supports dual GPU builds (CUDA + ROCm/HIP) with dynamic backend loading.
 {
   inputs,
   lib,
   config ? {},
+  llamaPackages ? null,
   ...
 }: final: prev: let
   system = prev.stdenv.hostPlatform.system;
-  llamaOverlay = inputs.llama-cpp.overlays.default final prev;
-  llamaPackages = llamaOverlay.llamaPackages;
+  # Use provided llamaPackages or evaluate upstream overlay if not passed
+  resolvedLlamaPackages =
+    if llamaPackages != null then llamaPackages
+    else (inputs.llama-cpp.overlays.default final prev).llamaPackages;
 
   # 1. Source and Version Overrides
   llamaCppSrc =
@@ -31,12 +36,16 @@
     if llamaCppSrc != null then
       pkg.overrideAttrs (old: {
         src = llamaCppSrc;
-        version = config.llamaCppTag or (old.version + "-custom");
+        version =
+          if config ? llamaCppTag && config.llamaCppTag != null
+          then config.llamaCppTag
+          else old.version + "-custom";
       })
     else
       pkg;
 
   # 2. CUDA Package and Version Resolution
+  # CUDA uses major_minor format: "12.4" -> "cudaPackages_12_4"
   cudaPkgAttrFromVersion = if config ? cudaVersion && config.cudaVersion != null then
     "cudaPackages_" + (lib.replaceStrings ["."] ["_"] config.cudaVersion)
     else null;
@@ -44,27 +53,32 @@
   resolvedCudaPackages =
     if config ? cudaPackages && config.cudaPackages != null then
       config.cudaPackages
-    else if config ? cudaPkgAttr && config.cudaPkgAttr != null then
+    else if config ? cudaPkgAttr && config.cudaPkgAttr != null && prev ? ${config.cudaPkgAttr} then
       prev.${config.cudaPkgAttr}
     else if cudaPkgAttrFromVersion != null && prev ? ${cudaPkgAttrFromVersion} then
       prev.${cudaPkgAttrFromVersion}
     else
-      null;
+      prev.cudaPackages or null;  # Fall back to default cudaPackages
 
   # 3. ROCm Package and Version Resolution
-  rocmPkgAttrFromVersion = if config ? rocmVersion && config.rocmVersion != null then
-    "rocmPackages_" + (lib.replaceStrings ["."] ["_"] config.rocmVersion)
+  # ROCm uses major-only format: "6.0" -> "rocmPackages_6"
+  rocmMajorVersion = if config ? rocmVersion && config.rocmVersion != null then
+    builtins.head (lib.splitString "." config.rocmVersion)
+    else null;
+
+  rocmPkgAttrFromVersion = if rocmMajorVersion != null then
+    "rocmPackages_${rocmMajorVersion}"
     else null;
 
   resolvedRocmPackages =
     if config ? rocmPackages && config.rocmPackages != null then
       config.rocmPackages
-    else if config ? rocmPkgAttr && config.rocmPkgAttr != null then
+    else if config ? rocmPkgAttr && config.rocmPkgAttr != null && prev ? ${config.rocmPkgAttr} then
       prev.${config.rocmPkgAttr}
     else if rocmPkgAttrFromVersion != null && prev ? ${rocmPkgAttrFromVersion} then
       prev.${rocmPkgAttrFromVersion}
     else
-      null;
+      prev.rocmPackages or null;  # Fall back to default rocmPackages
 
   # Helper function to apply native CPU optimizations to any llama.cpp package.
   withNativeCpu = pkg:
@@ -186,6 +200,51 @@ if (LLAMA_LLGUIDANCE)\
       '';
     });
 
+  # Helper function for dual GPU builds (CUDA + ROCm/HIP with dynamic backend loading)
+  # This enables both backends to be loaded at runtime as separate .so files
+  withDualGpu = {
+    cudaPkgs,
+    rocmPkgs,
+    cudaArchitectures ? ["86"],  # Default: sm_86 (RTX 3080 Ti)
+    rocmArchitectures ? ["gfx906"],  # Default: gfx906 (MI50)
+  }: pkg:
+    pkg.overrideAttrs (old: {
+      pname = old.pname + "-dual";
+
+      nativeBuildInputs = (old.nativeBuildInputs or [])
+        ++ [ rocmPkgs.clr prev.cmake prev.ninja ];
+
+      buildInputs = (old.buildInputs or [])
+        # CUDA dependencies
+        ++ [ cudaPkgs.cuda_cudart cudaPkgs.libcublas cudaPkgs.cuda_cccl ]
+        # ROCm/HIP dependencies
+        ++ [ rocmPkgs.clr rocmPkgs.hipblas rocmPkgs.rocblas ];
+
+      # Filter out conflicting flags and add dual GPU configuration
+      cmakeFlags = (lib.lists.filter (f:
+        !(lib.hasPrefix "-DGGML_CUDA" f) &&
+        !(lib.hasPrefix "-DGGML_HIP" f) &&
+        !(lib.hasPrefix "-DCMAKE_CUDA_ARCHITECTURES" f) &&
+        !(lib.hasPrefix "-DCMAKE_HIP_ARCHITECTURES" f) &&
+        !(lib.hasPrefix "-DAMDGPU_TARGETS" f)
+      ) (old.cmakeFlags or [])) ++ [
+        "-DGGML_BACKEND_DL=ON"
+        "-DGGML_CUDA=ON"
+        "-DGGML_HIP=ON"
+        "-DGGML_CPU_ALL_VARIANTS=ON"
+        "-DCMAKE_CUDA_ARCHITECTURES=${lib.concatStringsSep ";" cudaArchitectures}"
+        "-DCMAKE_HIP_ARCHITECTURES=${lib.concatStringsSep ";" rocmArchitectures}"
+        "-DCMAKE_HIP_COMPILER=${rocmPkgs.clr.hipClangPath}/clang++"
+      ];
+
+      # Set HIP environment variables for compilation
+      preConfigure = (old.preConfigure or "") + ''
+        export HIPCXX="${rocmPkgs.clr.hipClangPath}/clang"
+        export HIP_PATH="${rocmPkgs.clr}"
+        export ROCM_PATH="${rocmPkgs.clr}"
+      '';
+    });
+
   # Parameterized builder function for dynamic targets
   buildLlamaCpp = {
     accel ? "cpu",
@@ -198,12 +257,15 @@ if (LLAMA_LLGUIDANCE)\
     customRocmTargets ? null,
   }:
     let
-      basePkg = withSrc llamaPackages.llama-cpp;
+      basePkg = withSrc resolvedLlamaPackages.llama-cpp;
 
       cudaPkgs = if customCudaPackages != null then customCudaPackages else resolvedCudaPackages;
       rocmPkgs = if customRocmPackages != null then customRocmPackages else resolvedRocmPackages;
 
-      # Create acceleration overrides
+      # For dual GPU mode, we use a different build path
+      isDual = accel == "dual";
+
+      # Create acceleration overrides for single-backend modes
       accelOverrideAttrs =
         if accel == "cuda" then
           {
@@ -227,14 +289,26 @@ if (LLAMA_LLGUIDANCE)\
             useCuda = false;
             useRocm = false;
           }
-        else # cpu
+        else # cpu (also used as base for dual)
           {
             useCuda = false;
             useRocm = false;
             useVulkan = false;
           };
 
-      pkgWithAccel = basePkg.override accelOverrideAttrs;
+      # Build the package with appropriate acceleration
+      pkgWithAccel =
+        if isDual then
+          # For dual mode, start with CPU base and apply dual GPU overlay
+          withDualGpu {
+            cudaPkgs = cudaPkgs;
+            rocmPkgs = rocmPkgs;
+            cudaArchitectures = customCudaCapabilities or ["86"];
+            rocmArchitectures = customRocmTargets or ["gfx906"];
+          } (basePkg.override { useCuda = false; useRocm = false; useVulkan = false; })
+        else
+          basePkg.override accelOverrideAttrs;
+
       pkgWithHttps = if enableHttps then withHttps pkgWithAccel else pkgWithAccel;
       pkgWithNative = if native then withNativeCpu pkgWithHttps else pkgWithHttps;
       pkgWithGuidance = if guidance then withLlguidance pkgWithNative else pkgWithNative;
@@ -254,16 +328,16 @@ in {
   # --- Base Packages (Portable builds) ---
 
   # 1. Base CPU-only package
-  llama-cpp-cpu = withHttps (withSrc llamaPackages.llama-cpp);
+  llama-cpp-cpu = withHttps (withSrc resolvedLlamaPackages.llama-cpp);
 
   # 2. Base Vulkan-accelerated package
-  llama-cpp-vulkan = withHttps ((withSrc llamaPackages.llama-cpp).override { useVulkan = true; useRocm = false; useCuda = false; });
+  llama-cpp-vulkan = withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override { useVulkan = true; useRocm = false; useCuda = false; });
 
   # 3. Base CUDA-accelerated package
-  llama-cpp-cuda = withHttps ((withSrc llamaPackages.llama-cpp).override ({ useCuda = true; useRocm = false; useVulkan = false; } // (lib.optionalAttrs (resolvedCudaPackages != null) { cudaPackages = resolvedCudaPackages; })));
+  llama-cpp-cuda = withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useCuda = true; useRocm = false; useVulkan = false; } // (lib.optionalAttrs (resolvedCudaPackages != null) { cudaPackages = resolvedCudaPackages; })));
 
   # 4. Base ROCm-accelerated package
-  llama-cpp-rocm = withHttps ((withSrc llamaPackages.llama-cpp).override ({ useRocm = true; useCuda = false; useVulkan = false; } // (lib.optionalAttrs (resolvedRocmPackages != null) { rocmPackages = resolvedRocmPackages; })));
+  llama-cpp-rocm = withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useRocm = true; useCuda = false; useVulkan = false; } // (lib.optionalAttrs (resolvedRocmPackages != null) { rocmPackages = resolvedRocmPackages; })));
 
   # --- Native-Optimized Packages ---
 
@@ -285,6 +359,20 @@ in {
   llama-cpp-vulkan-native-llguidance = withLlguidance final.llama-cpp-vulkan-native;
   llama-cpp-cuda-native-llguidance = withLlguidance final.llama-cpp-cuda-native;
   llama-cpp-rocm-native-llguidance = withLlguidance final.llama-cpp-rocm-native;
+
+  # --- Dual GPU Packages (CUDA + ROCm with dynamic backend loading) ---
+
+  # Base dual GPU package (defaults: sm_86 + gfx906)
+  llama-cpp-dual = withHttps (withDualGpu {
+    cudaPkgs = resolvedCudaPackages;
+    rocmPkgs = resolvedRocmPackages;
+    cudaArchitectures = ["86"];
+    rocmArchitectures = ["gfx906"];
+  } (withSrc resolvedLlamaPackages.llama-cpp));
+
+  llama-cpp-dual-native = withNativeCpu final.llama-cpp-dual;
+  llama-cpp-dual-llguidance = withLlguidance final.llama-cpp-dual;
+  llama-cpp-dual-native-llguidance = withLlguidance final.llama-cpp-dual-native;
 
   # --- Sensible Dynamic Target and Helpers ---
 
