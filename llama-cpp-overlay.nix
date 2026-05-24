@@ -6,14 +6,67 @@
 {
   inputs,
   lib,
+  config ? {},
   ...
 }: final: prev: let
   system = prev.stdenv.hostPlatform.system;
   llamaOverlay = inputs.llama-cpp.overlays.default final prev;
   llamaPackages = llamaOverlay.llamaPackages;
 
+  # 1. Source and Version Overrides
+  llamaCppSrc =
+    if config ? llamaCppSrc && config.llamaCppSrc != null then
+      config.llamaCppSrc
+    else if config ? llamaCppTag && config.llamaCppTag != null && config ? llamaCppHash && config.llamaCppHash != null then
+      prev.fetchFromGitHub {
+        owner = "ggml-org";
+        repo = "llama.cpp";
+        rev = config.llamaCppTag;
+        hash = config.llamaCppHash;
+      }
+    else
+      null;
+
+  withSrc = pkg:
+    if llamaCppSrc != null then
+      pkg.overrideAttrs (old: {
+        src = llamaCppSrc;
+        version = config.llamaCppTag or (old.version + "-custom");
+      })
+    else
+      pkg;
+
+  # 2. CUDA Package and Version Resolution
+  cudaPkgAttrFromVersion = if config ? cudaVersion && config.cudaVersion != null then
+    "cudaPackages_" + (lib.replaceStrings ["."] ["_"] config.cudaVersion)
+    else null;
+
+  resolvedCudaPackages =
+    if config ? cudaPackages && config.cudaPackages != null then
+      config.cudaPackages
+    else if config ? cudaPkgAttr && config.cudaPkgAttr != null then
+      prev.${config.cudaPkgAttr}
+    else if cudaPkgAttrFromVersion != null && prev ? ${cudaPkgAttrFromVersion} then
+      prev.${cudaPkgAttrFromVersion}
+    else
+      null;
+
+  # 3. ROCm Package and Version Resolution
+  rocmPkgAttrFromVersion = if config ? rocmVersion && config.rocmVersion != null then
+    "rocmPackages_" + (lib.replaceStrings ["."] ["_"] config.rocmVersion)
+    else null;
+
+  resolvedRocmPackages =
+    if config ? rocmPackages && config.rocmPackages != null then
+      config.rocmPackages
+    else if config ? rocmPkgAttr && config.rocmPkgAttr != null then
+      prev.${config.rocmPkgAttr}
+    else if rocmPkgAttrFromVersion != null && prev ? ${rocmPkgAttrFromVersion} then
+      prev.${rocmPkgAttrFromVersion}
+    else
+      null;
+
   # Helper function to apply native CPU optimizations to any llama.cpp package.
-  # This avoids repeating the same overrideAttrs logic for each variant.
   withNativeCpu = pkg:
     pkg.overrideAttrs (old: {
       # Append a suffix for clarity in the Nix store path
@@ -29,14 +82,12 @@
       NIX_CXXSTDLIB_COMPILE = (old.NIX_CXXSTDLIB_COMPILE or "") + " -O3 -march=native -mtune=native";
     });
 
-  # Compile the Web UI from source using the pinned llama-cpp input
-  # Relocate tools/ui to a nested path under source/ to keep Svelte/Vite's
-  # relative build path (../../build/tools/ui/dist) within the writable sandbox root.
+  # Compile the Web UI from source using the pinned llama-cpp input or custom source
   llama-cpp-ui = prev.buildNpmPackage {
     pname = "llama-cpp-ui";
-    version = inputs.llama-cpp.shortRev or "latest";
+    version = if config ? llamaCppTag && config.llamaCppTag != null then config.llamaCppTag else (inputs.llama-cpp.shortRev or "latest");
 
-    src = inputs.llama-cpp;
+    src = if llamaCppSrc != null then llamaCppSrc else inputs.llama-cpp;
 
     # Set sourceRoot to the path containing package-lock.json so fetchNpmDeps succeeds.
     sourceRoot = "source/tools/ui";
@@ -60,8 +111,6 @@
   };
 
   # Helper function to enable HTTPS support and embed the WebUI built from source
-  # Note: LLAMA_CURL is deprecated in recent llama.cpp versions in favor of
-  # LLAMA_OPENSSL which enables HTTPS support in the internal httplib.
   withHttps = pkg:
     pkg.overrideAttrs (old: {
       nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ prev.pkg-config ];
@@ -78,8 +127,6 @@
     });
 
   # Build llguidance as a proper Rust package
-  # NOTE: When llama.cpp updates, you may need to update the rev and hashes below
-  # Run: misc/update-llguidance.sh to automatically update this
   llguidance = prev.rustPlatform.buildRustPackage rec {
     pname = "llguidance";
     version = "1.0.1";
@@ -138,57 +185,110 @@ if (LLAMA_LLGUIDANCE)\
         }' common/CMakeLists.txt
       '';
     });
+
+  # Parameterized builder function for dynamic targets
+  buildLlamaCpp = {
+    accel ? "cpu",
+    native ? true,
+    guidance ? false,
+    enableHttps ? true,
+    customCudaPackages ? null,
+    customRocmPackages ? null,
+    customCudaCapabilities ? null,
+    customRocmTargets ? null,
+  }:
+    let
+      basePkg = withSrc llamaPackages.llama-cpp;
+
+      cudaPkgs = if customCudaPackages != null then customCudaPackages else resolvedCudaPackages;
+      rocmPkgs = if customRocmPackages != null then customRocmPackages else resolvedRocmPackages;
+
+      # Create acceleration overrides
+      accelOverrideAttrs =
+        if accel == "cuda" then
+          {
+            useCuda = true;
+            useRocm = false;
+            useVulkan = false;
+          }
+          // (lib.optionalAttrs (cudaPkgs != null) { cudaPackages = cudaPkgs; })
+          // (lib.optionalAttrs (customCudaCapabilities != null) { cudaCapabilities = customCudaCapabilities; })
+        else if accel == "rocm" then
+          {
+            useRocm = true;
+            useCuda = false;
+            useVulkan = false;
+          }
+          // (lib.optionalAttrs (rocmPkgs != null) { rocmPackages = rocmPkgs; })
+          // (lib.optionalAttrs (customRocmTargets != null) { rocmTargets = customRocmTargets; })
+        else if accel == "vulkan" then
+          {
+            useVulkan = true;
+            useCuda = false;
+            useRocm = false;
+          }
+        else # cpu
+          {
+            useCuda = false;
+            useRocm = false;
+            useVulkan = false;
+          };
+
+      pkgWithAccel = basePkg.override accelOverrideAttrs;
+      pkgWithHttps = if enableHttps then withHttps pkgWithAccel else pkgWithAccel;
+      pkgWithNative = if native then withNativeCpu pkgWithHttps else pkgWithHttps;
+      pkgWithGuidance = if guidance then withLlguidance pkgWithNative else pkgWithNative;
+    in
+    pkgWithGuidance;
+
+  # Instantiate configured package
+  customLlamaCpp = buildLlamaCpp {
+    accel = config.acceleration or "cpu";
+    native = config.nativeCpu or true;
+    guidance = config.llguidance or false;
+    enableHttps = config.https or true;
+    customCudaCapabilities = config.cudaCapabilities or null;
+    customRocmTargets = config.rocmTargets or null;
+  };
 in {
   # --- Base Packages (Portable builds) ---
 
-  # 1. Base CPU-only package from the upstream flake's overlay.
-  llama-cpp-cpu = withHttps llamaPackages.llama-cpp;
+  # 1. Base CPU-only package
+  llama-cpp-cpu = withHttps (withSrc llamaPackages.llama-cpp);
 
-  # 2. Base Vulkan-accelerated package.
-  llama-cpp-vulkan = withHttps (llamaPackages.llama-cpp.override {useVulkan = true; useRocm = false; });
+  # 2. Base Vulkan-accelerated package
+  llama-cpp-vulkan = withHttps ((withSrc llamaPackages.llama-cpp).override { useVulkan = true; useRocm = false; useCuda = false; });
 
-  # 3. Base CUDA-accelerated package.
-  # Build directly from the CPU package to ensure we reuse the main nixpkgs
-  # configuration, including allowUnfree, instead of the upstream CUDA instance.
-  llama-cpp-cuda = withHttps (llamaPackages.llama-cpp.override {useCuda = true; useRocm = false; useVulkan = false; });
+  # 3. Base CUDA-accelerated package
+  llama-cpp-cuda = withHttps ((withSrc llamaPackages.llama-cpp).override ({ useCuda = true; useRocm = false; useVulkan = false; } // (lib.optionalAttrs (resolvedCudaPackages != null) { cudaPackages = resolvedCudaPackages; })));
+
+  # 4. Base ROCm-accelerated package
+  llama-cpp-rocm = withHttps ((withSrc llamaPackages.llama-cpp).override ({ useRocm = true; useCuda = false; useVulkan = false; } // (lib.optionalAttrs (resolvedRocmPackages != null) { rocmPackages = resolvedRocmPackages; })));
 
   # --- Native-Optimized Packages ---
 
-  # 1n. Native-optimized CPU-only package.
   llama-cpp-cpu-native = withNativeCpu final.llama-cpp-cpu;
-
-  # 2n. Native-optimized Vulkan package (for Intel/AMD GPUs).
   llama-cpp-vulkan-native = withNativeCpu final.llama-cpp-vulkan;
-
-  # 3n. Native-optimized CUDA package (for NVIDIA GPUs).
   llama-cpp-cuda-native = withNativeCpu final.llama-cpp-cuda;
+  llama-cpp-rocm-native = withNativeCpu final.llama-cpp-rocm;
 
   # --- LLGuidance-Enabled Packages ---
 
-  # 1g. CPU-only with llguidance support.
   llama-cpp-cpu-llguidance = withLlguidance final.llama-cpp-cpu;
-
-  # 2g. Vulkan with llguidance support.
   llama-cpp-vulkan-llguidance = withLlguidance final.llama-cpp-vulkan;
-
-  # 3g. CUDA with llguidance support.
   llama-cpp-cuda-llguidance = withLlguidance final.llama-cpp-cuda;
+  llama-cpp-rocm-llguidance = withLlguidance final.llama-cpp-rocm;
 
   # --- Combined: Native + LLGuidance ---
 
-  # 1ng. Native-optimized CPU-only with llguidance.
   llama-cpp-cpu-native-llguidance = withLlguidance final.llama-cpp-cpu-native;
-
-  # 2ng. Native-optimized Vulkan with llguidance.
   llama-cpp-vulkan-native-llguidance = withLlguidance final.llama-cpp-vulkan-native;
-
-  # 3ng. Native-optimized CUDA with llguidance.
   llama-cpp-cuda-native-llguidance = withLlguidance final.llama-cpp-cuda-native;
+  llama-cpp-rocm-native-llguidance = withLlguidance final.llama-cpp-rocm-native;
 
-  # --- A Sensible Default ---
+  # --- Sensible Dynamic Target and Helpers ---
 
-  # For convenience, `pkgs.llama-cpp` will point to the most common optimized build.
-  # Anyone building from source on their own machine likely wants this.
-  llama-cpp = final.llama-cpp-cpu-native;
+  llama-cpp = customLlamaCpp;
   llama-cpp-ui = llama-cpp-ui;
+  llguidance = llguidance;
 }
