@@ -212,11 +212,11 @@ if (LLAMA_LLGUIDANCE)\
       pname = old.pname + "-dual";
 
       nativeBuildInputs = (old.nativeBuildInputs or [])
-        ++ [ rocmPkgs.clr prev.cmake prev.ninja ];
+        ++ [ cudaPkgs.cuda_nvcc rocmPkgs.clr prev.cmake prev.ninja ];
 
       buildInputs = (old.buildInputs or [])
         # CUDA dependencies
-        ++ [ cudaPkgs.cuda_cudart cudaPkgs.libcublas cudaPkgs.cuda_cccl ]
+        ++ [ cudaPkgs.cuda_cudart cudaPkgs.cuda_nvcc cudaPkgs.libcublas cudaPkgs.cuda_cccl ]
         # ROCm/HIP dependencies
         ++ [ rocmPkgs.clr rocmPkgs.hipblas rocmPkgs.rocblas ];
 
