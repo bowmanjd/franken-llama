@@ -276,7 +276,6 @@ if (LLAMA_LLGUIDANCE)\
             useVulkan = false;
           }
           // (lib.optionalAttrs (cudaPkgs != null) { cudaPackages = cudaPkgs; })
-          // (lib.optionalAttrs (customCudaCapabilities != null) { cudaCapabilities = customCudaCapabilities; })
         else if accel == "rocm" then
           {
             useRocm = true;
@@ -284,7 +283,6 @@ if (LLAMA_LLGUIDANCE)\
             useVulkan = false;
           }
           // (lib.optionalAttrs (rocmPkgs != null) { rocmPackages = rocmPkgs; })
-          // (lib.optionalAttrs (customRocmTargets != null) { rocmTargets = customRocmTargets; })
         else if accel == "vulkan" then
           {
             useVulkan = true;
@@ -298,8 +296,28 @@ if (LLAMA_LLGUIDANCE)\
             useVulkan = false;
           };
 
+      # Helper to apply CUDA architectures via cmake flags
+      withCudaArch = arches: pkg:
+        if arches != null then
+          pkg.overrideAttrs (old: {
+            cmakeFlags = (lib.lists.filter (f: !(lib.hasPrefix "-DCMAKE_CUDA_ARCHITECTURES" f)) (old.cmakeFlags or []))
+              ++ ["-DCMAKE_CUDA_ARCHITECTURES=${lib.concatStringsSep ";" arches}"];
+          })
+        else pkg;
+
+      # Helper to apply ROCm architectures via cmake flags
+      withRocmArch = arches: pkg:
+        if arches != null then
+          pkg.overrideAttrs (old: {
+            cmakeFlags = (lib.lists.filter (f:
+              !(lib.hasPrefix "-DAMDGPU_TARGETS" f) && !(lib.hasPrefix "-DGPU_TARGETS" f)
+            ) (old.cmakeFlags or []))
+              ++ ["-DAMDGPU_TARGETS=${lib.concatStringsSep ";" arches}"];
+          })
+        else pkg;
+
       # Build the package with appropriate acceleration
-      pkgWithAccel =
+      basePkgWithAccel =
         if isDual then
           # For dual mode, start with CPU base and apply dual GPU overlay
           withDualGpu {
@@ -310,6 +328,12 @@ if (LLAMA_LLGUIDANCE)\
           } (basePkg.override { useCuda = false; useRocm = false; useVulkan = false; })
         else
           basePkg.override accelOverrideAttrs;
+
+      # Apply architecture overrides for single-backend modes
+      pkgWithAccel =
+        if accel == "cuda" then withCudaArch customCudaCapabilities basePkgWithAccel
+        else if accel == "rocm" then withRocmArch customRocmTargets basePkgWithAccel
+        else basePkgWithAccel;
 
       pkgWithHttps = if enableHttps then withHttps pkgWithAccel else pkgWithAccel;
       pkgWithNative = if native then withNativeCpu pkgWithHttps else pkgWithHttps;

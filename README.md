@@ -75,6 +75,70 @@ The overlay provides these package variants:
 - `*-llguidance` variants with structured output
 - `*-native-llguidance` combined variants
 
+### Container Packages (x86_64-linux only)
+
+- `*-slim` - Portable packages with Nix store references stripped
+- `*-container` - OCI container images
+- `*-modal` - Container images with Python/Modal support for modal.com deployment
+
+## Building Containers
+
+Edit `config.json` to set your target GPU and CUDA version:
+
+```json
+{
+  "cudaVersion": "12.9",
+  "cudaCapabilities": ["89"],
+  "includeModal": true
+}
+```
+
+Build and load:
+
+```bash
+nix build .#container
+podman load < result
+```
+
+That's it. The image is tagged automatically (e.g., `ghcr.io/bowmanjd/llama-cpp:b9310-cuda12.9-sm89`).
+
+**Common GPU architectures:**
+
+| GPU | Architecture | Capability |
+|-----|--------------|------------|
+| RTX 3080/3090 | Ampere | `86` |
+| RTX 4080/4090 | Ada Lovelace | `89` |
+| L40S | Ada Lovelace | `89` |
+| H100 | Hopper | `90` |
+| A100 | Ampere | `80` |
+
+### Other Container Targets
+
+For quick builds without editing config.json:
+
+```bash
+nix build .#llama-cpp-cuda-container        # Default CUDA
+nix build .#llama-cpp-rocm-container        # ROCm/AMD
+nix build .#llama-cpp-cpu-container         # CPU only
+nix build .#llama-cpp-cuda-llguidance-modal # CUDA + llguidance + Modal
+```
+
+### Container Configuration (NixOS Module)
+
+```nix
+services.franken-llama = {
+  enable = true;
+  acceleration = "cuda";
+  llguidance = true;
+  
+  container = {
+    enable = true;
+    imageName = "ghcr.io/yourorg/llama-cpp";
+    includeModal = true;  # Include Python for modal.com
+  };
+};
+```
+
 ## Maintenance
 
 Update llama.cpp version (fetches latest tag if none provided):

@@ -1,0 +1,5 @@
+{
+  "cudaVersion": "12.9",
+  "cudaCapabilities": ["89"],
+  "includeModal": true
+}

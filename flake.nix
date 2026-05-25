@@ -155,6 +155,29 @@
               default = null;
               description = "Specific rocmPackages attribute name to pull from nixpkgs (e.g. 'rocmPackages_6').";
             };
+
+            # Container options
+            container = {
+              enable = lib.mkEnableOption "Build OCI container images for llama.cpp";
+
+              imageName = lib.mkOption {
+                type = lib.types.str;
+                default = "ghcr.io/bowmanjd/llama-cpp";
+                description = "Container image name/registry path.";
+              };
+
+              imageTag = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Container image tag. Defaults to '<version>-<acceleration>'.";
+              };
+
+              includeModal = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Include Python and Modal dependencies for deployment on modal.com.";
+              };
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -184,12 +207,73 @@
       # Expose individual packages directly for building and caching
       packages = forAllSystems (system:
         let
+          # Read container config from config.json
+          containerCfg = builtins.fromJSON (builtins.readFile ./config.json);
+
+          # Base pkgs for standard packages
           pkgs = import nixpkgs {
             inherit system;
             config.allowUnfree = true;
             overlays = [
               self.overlays.default
             ];
+          };
+
+          # Configured pkgs using config.json settings
+          configuredPkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfree = true;
+            overlays = [
+              (self.overlays.configure {
+                acceleration = "cuda";
+                llguidance = true;
+                https = true;
+                cudaVersion = containerCfg.cudaVersion or null;
+                cudaCapabilities = containerCfg.cudaCapabilities or null;
+              })
+            ];
+          };
+
+          # Import container utilities
+          containerUtils = import ./container.nix {
+            inherit pkgs;
+            lib = nixpkgs.lib;
+            config = {};
+          };
+
+          configuredContainerUtils = import ./container.nix {
+            pkgs = configuredPkgs;
+            lib = nixpkgs.lib;
+            config = {};
+          };
+
+          # Helper to safely build containers (only on Linux x86_64)
+          mkContainer = llamaPkg: containerUtils.makeContainerPair {
+            llamaPackage = llamaPkg;
+            cudaPackages = pkgs.cudaPackages;
+            rocmPackages = pkgs.rocmPackages or null;
+          };
+
+          mkContainerModal = llamaPkg: containerUtils.makeContainerPair {
+            llamaPackage = llamaPkg;
+            cudaPackages = pkgs.cudaPackages;
+            rocmPackages = pkgs.rocmPackages or null;
+            includeModal = true;
+          };
+
+          # Only build containers on x86_64-linux (Docker images are Linux-specific)
+          isLinuxX86 = system == "x86_64-linux";
+
+          # The main "container" target using config.json
+          configuredContainer = configuredContainerUtils.makeContainerPair {
+            llamaPackage = configuredPkgs.llama-cpp;
+            cudaPackages = configuredPkgs.cudaPackages;
+            includeModal = containerCfg.includeModal or false;
+            imageTag = let
+              version = llama-cpp.shortRev or "latest";
+              cuda = containerCfg.cudaVersion or "cuda";
+              arch = builtins.head (containerCfg.cudaCapabilities or ["unknown"]);
+            in "${version}-cuda${cuda}-sm${arch}";
           };
         in
         {
@@ -216,6 +300,32 @@
             llama-cpp-dual-native-llguidance
             llama-cpp
             llama-cpp-ui;
+        }
+        # Container packages (x86_64-linux only)
+        // nixpkgs.lib.optionalAttrs isLinuxX86 {
+          # Slim packages (portable, no container)
+          llama-cpp-cpu-slim = (mkContainer pkgs.llama-cpp-cpu).slim;
+          llama-cpp-cuda-slim = (mkContainer pkgs.llama-cpp-cuda).slim;
+          llama-cpp-rocm-slim = (mkContainer pkgs.llama-cpp-rocm).slim;
+          llama-cpp-vulkan-slim = (mkContainer pkgs.llama-cpp-vulkan).slim;
+
+          # Container images
+          llama-cpp-cpu-container = (mkContainer pkgs.llama-cpp-cpu).container;
+          llama-cpp-cuda-container = (mkContainer pkgs.llama-cpp-cuda).container;
+          llama-cpp-rocm-container = (mkContainer pkgs.llama-cpp-rocm).container;
+          llama-cpp-vulkan-container = (mkContainer pkgs.llama-cpp-vulkan).container;
+
+          # With llguidance
+          llama-cpp-cuda-llguidance-slim = (mkContainer pkgs.llama-cpp-cuda-llguidance).slim;
+          llama-cpp-cuda-llguidance-container = (mkContainer pkgs.llama-cpp-cuda-llguidance).container;
+
+          # Modal-ready containers (includes Python)
+          llama-cpp-cuda-modal = (mkContainerModal pkgs.llama-cpp-cuda).container;
+          llama-cpp-cuda-llguidance-modal = (mkContainerModal pkgs.llama-cpp-cuda-llguidance).container;
+
+          # Simple targets using config.json
+          container = configuredContainer.container;
+          slim = configuredContainer.slim;
         }
       );
     };
