@@ -45,7 +45,9 @@
       pkg;
 
   # 2. CUDA Package and Version Resolution
-  # CUDA uses major_minor format: "12.4" -> "cudaPackages_12_4"
+  # CUDA uses major_minor format: "12.9" -> "cudaPackages_12_9"
+  # Available in nixpkgs unstable: 12.6, 12.8, 12.9 (default), 13.0, 13.1, 13.2
+  # Note: 12.0-12.5 and 12.7 removed upstream
   cudaPkgAttrFromVersion = if config ? cudaVersion && config.cudaVersion != null then
     "cudaPackages_" + (lib.replaceStrings ["."] ["_"] config.cudaVersion)
     else null;

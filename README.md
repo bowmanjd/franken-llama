@@ -79,9 +79,11 @@ The overlay provides these package variants:
 
 ## Maintenance
 
-After updating the llama-cpp input, sync llguidance:
+Update llama.cpp version (fetches latest tag if none provided):
 
 ```bash
+./util/update-llama-version.sh          # auto-fetch latest
+./util/update-llama-version.sh b9310    # use specific tag
 nix flake lock --update-input llama-cpp
 ./util/update-llguidance.sh
 ```

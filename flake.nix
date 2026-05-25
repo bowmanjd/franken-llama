@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     llama-cpp = {
-      url = "github:ggml-org/llama.cpp/b9254";
+      url = "github:ggml-org/llama.cpp/b9310";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -112,13 +112,13 @@
 
             llamaCppTag = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
-              default = "b9305";
+              default = "b9310";
               description = "Overridden Git tag/revision of llama.cpp to compile.";
             };
 
             llamaCppHash = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
-              default = "sha256-TsleTV12rW+35OvHxkWJo42Lhp6FkSyozxiK71yjfRg=";
+              default = "sha256-XJwh8bPrbhckZkwiS6i3tNGW5Ujeh7hqU3YL6HiS1Ro=";
               description = "Nix SHA256 hash for the overridden llamaCppTag.";
             };
 
@@ -131,13 +131,17 @@
             cudaVersion = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
-              description = "Major and minor version of CUDA to target (e.g. '12.4' or '13.0').";
+              description = ''
+                Major and minor version of CUDA to target (e.g. '12.9' or '13.2').
+                Available in nixpkgs: 12.6, 12.8, 12.9 (default), 13.0, 13.1, 13.2 (latest).
+                Note: CUDA 12.0-12.5 and 12.7 have been removed from nixpkgs.
+              '';
             };
 
             cudaPkgAttr = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
-              description = "Specific cudaPackages attribute name to pull from nixpkgs (e.g. 'cudaPackages_12_4').";
+              description = "Specific cudaPackages attribute name (e.g. 'cudaPackages_12_9', 'cudaPackages_13_2').";
             };
 
             rocmVersion = lib.mkOption {
