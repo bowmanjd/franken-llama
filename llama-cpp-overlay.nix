@@ -120,7 +120,7 @@
 
     installPhase = ''
       mkdir -p $out
-      cp -r ../../build/tools/ui/dist/* $out/
+      cp -r dist/* $out/
     '';
   };
 
