@@ -303,8 +303,8 @@ if (LLAMA_LLGUIDANCE)\
           withDualGpu {
             cudaPkgs = cudaPkgs;
             rocmPkgs = rocmPkgs;
-            cudaArchitectures = customCudaCapabilities or ["86"];
-            rocmArchitectures = customRocmTargets or ["gfx906"];
+            cudaArchitectures = if customCudaCapabilities != null then customCudaCapabilities else ["86"];
+            rocmArchitectures = if customRocmTargets != null then customRocmTargets else ["gfx906"];
           } (basePkg.override { useCuda = false; useRocm = false; useVulkan = false; })
         else
           basePkg.override accelOverrideAttrs;
