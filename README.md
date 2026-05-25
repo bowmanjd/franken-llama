@@ -1,15 +1,13 @@
 # franken-llama
 
-Custom llama.cpp Nix flake with native CPU optimizations, llguidance support, HTTPS/WebUI, and multi-GPU backends including dual CUDA+ROCm builds.
+Custom llama.cpp Nix flake with native CPU optimizations, llguidance support, and multi-GPU backends including dual CUDA+ROCm builds.
 
 ## Features
 
-- Native CPU optimization (`-march=native`)
 - llguidance integration for structured output
-- HTTPS support with embedded Svelte WebUI
 - Multiple acceleration backends: CPU, Vulkan, CUDA, ROCm, dual (CUDA+ROCm)
-- Dynamic backend loading for multi-GPU systems
-- Configurable CUDA/ROCm architecture targets
+- HTTPS support with embedded Svelte WebUI
+- Configurable with parameters
 
 ## Usage
 
@@ -87,3 +85,5 @@ Update llama.cpp version (fetches latest tag if none provided):
 nix flake lock --update-input llama-cpp
 ./util/update-llguidance.sh
 ```
+
+Can also list available CUDA versions in nixpkgs with `util/list-cuda-versions.sh`
