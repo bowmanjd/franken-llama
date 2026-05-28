@@ -146,7 +146,6 @@ services.franken-llama = {
 ROCm builds automatically include performance optimizations matching the [ML-gfx906](https://github.com/mixa3607/ML-gfx906) project:
 
 - **HIP Graphs** (`-DGGML_HIP_GRAPHS=ON`): +8-10% generation speed via graph capture
-- **RCCL** (`-DGGML_HIP_RCCL=ON`): Multi-GPU communication support
 - **Dynamic backends** (`-DGGML_BACKEND_DL=ON`): Runtime backend loading
 - **CPU variants** (`-DGGML_CPU_ALL_VARIANTS=ON`): Optimized CPU fallback paths
 
