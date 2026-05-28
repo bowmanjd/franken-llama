@@ -104,13 +104,15 @@ That's it. The image is tagged automatically (e.g., `ghcr.io/bowmanjd/llama-cpp:
 
 **Common GPU architectures:**
 
-| GPU | Architecture | Capability |
-|-----|--------------|------------|
+| GPU | Architecture | Capability/Target |
+|-----|--------------|-------------------|
 | RTX 3080/3090 | Ampere | `86` |
 | RTX 4080/4090 | Ada Lovelace | `89` |
 | L40S | Ada Lovelace | `89` |
 | H100 | Hopper | `90` |
 | A100 | Ampere | `80` |
+| MI50/MI60 | Vega 20 (ROCm) | `gfx906` |
+| Radeon VII | Vega 20 (ROCm) | `gfx906` |
 
 ### Other Container Targets
 
@@ -138,6 +140,25 @@ services.franken-llama = {
   };
 };
 ```
+
+## AMD MI50/MI60 (gfx906) Optimizations
+
+ROCm builds automatically include performance optimizations matching the [ML-gfx906](https://github.com/mixa3607/ML-gfx906) project:
+
+- **HIP Graphs** (`-DGGML_HIP_GRAPHS=ON`): +8-10% generation speed via graph capture
+- **RCCL** (`-DGGML_HIP_RCCL=ON`): Multi-GPU communication support
+- **Dynamic backends** (`-DGGML_BACKEND_DL=ON`): Runtime backend loading
+- **CPU variants** (`-DGGML_CPU_ALL_VARIANTS=ON`): Optimized CPU fallback paths
+
+```nix
+services.franken-llama = {
+  enable = true;
+  acceleration = "rocm";
+  rocmTargets = ["gfx906"];
+};
+```
+
+**Note**: For full gfx906 support with ROCm 6.4+, you may need patched ROCm libraries with gfx906 Tensile files (see [mixa3607/ML-gfx906](https://github.com/mixa3607/ML-gfx906) for container images with these patches)
 
 ## Maintenance
 

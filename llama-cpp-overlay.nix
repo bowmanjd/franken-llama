@@ -202,6 +202,22 @@ if (LLAMA_LLGUIDANCE)\
       '';
     });
 
+  # Helper function to apply ROCm/HIP performance optimizations for gfx906 (MI50/MI60)
+  # Matches the build flags used by mixa3607/ML-gfx906 project
+  withRocmOptimizations = rocmPkgs: pkg:
+    pkg.overrideAttrs (old: {
+      buildInputs = (old.buildInputs or [])
+        ++ lib.optionals (rocmPkgs != null && rocmPkgs ? rccl) [ rocmPkgs.rccl ];
+
+      cmakeFlags = (old.cmakeFlags or []) ++ [
+        "-DGGML_HIP_GRAPHS=ON"           # +8-10% generation speed via graph capture
+        "-DGGML_BACKEND_DL=ON"           # Dynamic backend loading
+        "-DGGML_CPU_ALL_VARIANTS=ON"     # Optimized CPU fallback paths
+      ] ++ lib.optionals (rocmPkgs != null && rocmPkgs ? rccl) [
+        "-DGGML_HIP_RCCL=ON"             # Multi-GPU communication
+      ];
+    });
+
   # Helper function for dual GPU builds (CUDA + ROCm/HIP with dynamic backend loading)
   # This enables both backends to be loaded at runtime as separate .so files
   withDualGpu = {
@@ -220,7 +236,8 @@ if (LLAMA_LLGUIDANCE)\
         # CUDA dependencies
         ++ [ cudaPkgs.cuda_cudart cudaPkgs.cuda_nvcc cudaPkgs.libcublas cudaPkgs.cuda_cccl ]
         # ROCm/HIP dependencies
-        ++ [ rocmPkgs.clr rocmPkgs.hipblas rocmPkgs.rocblas ];
+        ++ [ rocmPkgs.clr rocmPkgs.hipblas rocmPkgs.rocblas ]
+        ++ lib.optionals (rocmPkgs ? rccl) [ rocmPkgs.rccl ];
 
       # Filter out conflicting flags and add dual GPU configuration
       cmakeFlags = (lib.lists.filter (f:
@@ -233,10 +250,13 @@ if (LLAMA_LLGUIDANCE)\
         "-DGGML_BACKEND_DL=ON"
         "-DGGML_CUDA=ON"
         "-DGGML_HIP=ON"
+        "-DGGML_HIP_GRAPHS=ON"
         "-DGGML_CPU_ALL_VARIANTS=ON"
         "-DCMAKE_CUDA_ARCHITECTURES=${lib.concatStringsSep ";" cudaArchitectures}"
         "-DCMAKE_HIP_ARCHITECTURES=${lib.concatStringsSep ";" rocmArchitectures}"
         "-DCMAKE_HIP_COMPILER=${rocmPkgs.clr.hipClangPath}/clang++"
+      ] ++ lib.optionals (rocmPkgs ? rccl) [
+        "-DGGML_HIP_RCCL=ON"
       ];
 
       # Set HIP environment variables for compilation
@@ -335,7 +355,12 @@ if (LLAMA_LLGUIDANCE)\
         else if accel == "rocm" then withRocmArch customRocmTargets basePkgWithAccel
         else basePkgWithAccel;
 
-      pkgWithHttps = if enableHttps then withHttps pkgWithAccel else pkgWithAccel;
+      # Apply ROCm-specific optimizations (HIP_GRAPHS, RCCL) for ROCm builds
+      pkgWithRocmOpts =
+        if accel == "rocm" then withRocmOptimizations rocmPkgs pkgWithAccel
+        else pkgWithAccel;
+
+      pkgWithHttps = if enableHttps then withHttps pkgWithRocmOpts else pkgWithRocmOpts;
       pkgWithNative = if native then withNativeCpu pkgWithHttps else pkgWithHttps;
       pkgWithGuidance = if guidance then withLlguidance pkgWithNative else pkgWithNative;
     in
@@ -362,8 +387,8 @@ in {
   # 3. Base CUDA-accelerated package
   llama-cpp-cuda = withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useCuda = true; useRocm = false; useVulkan = false; } // (lib.optionalAttrs (resolvedCudaPackages != null) { cudaPackages = resolvedCudaPackages; })));
 
-  # 4. Base ROCm-accelerated package
-  llama-cpp-rocm = withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useRocm = true; useCuda = false; useVulkan = false; } // (lib.optionalAttrs (resolvedRocmPackages != null) { rocmPackages = resolvedRocmPackages; })));
+  # 4. Base ROCm-accelerated package (with HIP_GRAPHS and RCCL optimizations)
+  llama-cpp-rocm = withRocmOptimizations resolvedRocmPackages (withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useRocm = true; useCuda = false; useVulkan = false; } // (lib.optionalAttrs (resolvedRocmPackages != null) { rocmPackages = resolvedRocmPackages; }))));
 
   # --- Native-Optimized Packages ---
 
