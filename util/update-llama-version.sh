@@ -61,4 +61,48 @@ sed -i -E '/llamaCppTag = lib\.mkOption/,/};/ s|(default = ")[^"]*|\1'"$TAG"'|' 
 sed -i -E '/llamaCppHash = lib\.mkOption/,/};/ s|(default = ")[^"]*|\1'"$HASH"'|' "$FLAKE"
 
 echo "Updated $FLAKE"
+
+# Update npmDepsHash for the web UI
+OVERLAY="$REPO_ROOT/llama-cpp-overlay.nix"
+if [ -f "$OVERLAY" ]; then
+    echo "Calculating npm deps hash for web UI..."
+
+    # Create a temp directory and extract the UI source
+    TMPDIR=$(mktemp -d)
+    trap "rm -rf $TMPDIR" EXIT
+
+    # Download and extract just the tools/ui directory
+    curl -sL "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${TAG}.tar.gz" | \
+        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG#b}/tools/ui" 2>/dev/null || \
+    curl -sL "https://github.com/ggml-org/llama.cpp/archive/${TAG}.tar.gz" | \
+        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG#b}/tools/ui"
+
+    if [ -f "$TMPDIR/tools/ui/package-lock.json" ]; then
+        NPM_HASH=$(nix store prefetch-file --unpack --json "file://$TMPDIR/tools/ui" --extra-experimental-features "nix-command flakes" 2>/dev/null | jq -r '.hash' || true)
+
+        # If direct prefetch didn't work, use prefetch-npm-deps if available
+        if [ -z "$NPM_HASH" ] || [ "$NPM_HASH" = "null" ]; then
+            if command -v prefetch-npm-deps &> /dev/null; then
+                NPM_HASH=$(prefetch-npm-deps "$TMPDIR/tools/ui/package-lock.json" 2>/dev/null || true)
+            fi
+        fi
+
+        # Fallback: use nix-prefetch-npm-deps from nixpkgs
+        if [ -z "$NPM_HASH" ] || [ "$NPM_HASH" = "null" ]; then
+            NPM_HASH=$(nix run nixpkgs#prefetch-npm-deps -- "$TMPDIR/tools/ui/package-lock.json" 2>/dev/null || true)
+        fi
+
+        if [ -n "$NPM_HASH" ] && [ "$NPM_HASH" != "null" ]; then
+            echo "npm deps hash: $NPM_HASH"
+            sed -i -E 's|(npmDepsHash = ")[^"]*|\1'"$NPM_HASH"'|' "$OVERLAY"
+            echo "Updated $OVERLAY"
+        else
+            echo "Warning: Could not calculate npm deps hash. You may need to update it manually." >&2
+            echo "Build once to get the correct hash from the error message." >&2
+        fi
+    else
+        echo "Warning: tools/ui/package-lock.json not found in release" >&2
+    fi
+fi
+
 echo "Run 'nix flake lock --update-input llama-cpp' to sync the lock file."
