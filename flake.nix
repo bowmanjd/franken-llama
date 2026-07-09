@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     llama-cpp = {
-      url = "github:ggml-org/llama.cpp/b9789";
+      url = "github:ggml-org/llama.cpp/b9940";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -112,13 +112,13 @@
 
             llamaCppTag = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
-              default = "b9789";
+              default = "b9940";
               description = "Overridden Git tag/revision of llama.cpp to compile.";
             };
 
             llamaCppHash = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
-              default = "sha256-wdlC0soVb3L+ooV7PlMt/MZhmWQbyxAVeUomkxufJck=";
+              default = "sha256-FtlueoIGu8IHDHR27MY7LeKPUhz6teqoT10RjlhIxtE=";
               description = "Nix SHA256 hash for the overridden llamaCppTag.";
             };
 
@@ -126,6 +126,12 @@
               type = lib.types.nullOr lib.types.package;
               default = null;
               description = "Custom pre-fetched source package to compile llama.cpp from.";
+            };
+
+            npmDepsHash = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Nix SHA256 hash for the NPM dependencies of the web UI.";
             };
 
             cudaVersion = lib.mkOption {
@@ -195,6 +201,7 @@
                   llamaCppTag
                   llamaCppHash
                   llamaCppSrc
+                  npmDepsHash
                   cudaVersion
                   cudaPkgAttr
                   rocmVersion

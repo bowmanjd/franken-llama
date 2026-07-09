@@ -73,18 +73,16 @@ if [ -f "$OVERLAY" ]; then
 
     # Download and extract just the tools/ui directory
     curl -sL "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${TAG}.tar.gz" | \
-        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG#b}/tools/ui" 2>/dev/null || \
+        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG}/tools/ui" 2>/dev/null || \
     curl -sL "https://github.com/ggml-org/llama.cpp/archive/${TAG}.tar.gz" | \
-        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG#b}/tools/ui"
+        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG}/tools/ui"
 
     if [ -f "$TMPDIR/tools/ui/package-lock.json" ]; then
-        NPM_HASH=$(nix store prefetch-file --unpack --json "file://$TMPDIR/tools/ui" --extra-experimental-features "nix-command flakes" 2>/dev/null | jq -r '.hash' || true)
+        NPM_HASH=""
 
-        # If direct prefetch didn't work, use prefetch-npm-deps if available
-        if [ -z "$NPM_HASH" ] || [ "$NPM_HASH" = "null" ]; then
-            if command -v prefetch-npm-deps &> /dev/null; then
-                NPM_HASH=$(prefetch-npm-deps "$TMPDIR/tools/ui/package-lock.json" 2>/dev/null || true)
-            fi
+        # Use prefetch-npm-deps if available
+        if command -v prefetch-npm-deps &> /dev/null; then
+            NPM_HASH=$(prefetch-npm-deps "$TMPDIR/tools/ui/package-lock.json" 2>/dev/null || true)
         fi
 
         # Fallback: use nix-prefetch-npm-deps from nixpkgs
@@ -94,7 +92,7 @@ if [ -f "$OVERLAY" ]; then
 
         if [ -n "$NPM_HASH" ] && [ "$NPM_HASH" != "null" ]; then
             echo "npm deps hash: $NPM_HASH"
-            sed -i -E 's|(npmDepsHash = ")[^"]*|\1'"$NPM_HASH"'|' "$OVERLAY"
+            sed -i -E 's|(npmDepsHash = .* else ")[^"]*|\1'"$NPM_HASH"'|' "$OVERLAY"
             echo "Updated $OVERLAY"
         else
             echo "Warning: Could not calculate npm deps hash. You may need to update it manually." >&2

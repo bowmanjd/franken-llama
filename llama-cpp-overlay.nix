@@ -116,7 +116,7 @@
       sourceRoot="/build/ui-build/tools/ui"
     '';
 
-    npmDepsHash = "sha256-X1DZgmhS/zHTqDT5zq0kywwntthcJ9vRXeqyO3zz6UU=";
+    npmDepsHash = if config ? npmDepsHash && config.npmDepsHash != null then config.npmDepsHash else "sha256-6s9skw1wzEfm9QKktTqea3J+oudQAsS6O2VnZEMXAdw=";
 
     npmBuildScript = "build";
 
@@ -229,7 +229,7 @@ if (LLAMA_LLGUIDANCE)\
 
       buildInputs = (old.buildInputs or [])
         # CUDA dependencies
-        ++ [ cudaPkgs.cuda_cudart cudaPkgs.cuda_nvcc cudaPkgs.libcublas cudaPkgs.cuda_cccl ]
+        ++ [ cudaPkgs.cuda_cudart cudaPkgs.cuda_nvcc cudaPkgs.libcublas (cudaPkgs.cccl or cudaPkgs.cuda_cccl) ]
         # ROCm/HIP dependencies
         ++ [ rocmPkgs.clr rocmPkgs.hipblas rocmPkgs.rocblas ];
 
