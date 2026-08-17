@@ -116,7 +116,7 @@
       sourceRoot="/build/ui-build/tools/ui"
     '';
 
-    npmDepsHash = if config ? npmDepsHash && config.npmDepsHash != null then config.npmDepsHash else "sha256-6s9skw1wzEfm9QKktTqea3J+oudQAsS6O2VnZEMXAdw=";
+    npmDepsHash = if config ? npmDepsHash && config.npmDepsHash != null then config.npmDepsHash else "sha256-2Q7XhaLAArmviOLdQsNbYTfdyDE5pW9lR26cRHEVl9k=";
 
     npmBuildScript = "build";
 
