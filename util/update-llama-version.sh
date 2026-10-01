@@ -18,7 +18,7 @@ get_latest_tag() {
     fi
     if [ -z "$tag" ]; then
         tag=$(git ls-remote --tags --sort='v:refname' https://github.com/ggml-org/llama.cpp.git | \
-              grep -o 'refs/tags/b[0-9]*' | tail -n 1 | cut -d'/' -f3)
+              grep -E 'refs/tags/[bv][0-9][^^{}]*$' | tail -n 1 | sed 's|.*/||')
     fi
     echo "$tag"
 }
@@ -71,11 +71,20 @@ if [ -f "$OVERLAY" ]; then
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
 
-    # Download and extract just the tools/ui directory
-    curl -sL "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${TAG}.tar.gz" | \
-        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG}/tools/ui" 2>/dev/null || \
-    curl -sL "https://github.com/ggml-org/llama.cpp/archive/${TAG}.tar.gz" | \
-        tar -xzf - -C "$TMPDIR" --strip-components=1 "llama.cpp-${TAG}/tools/ui"
+    # Download archive and extract tools/ui directory
+    ARCHIVE_FILE="$TMPDIR/archive.tar.gz"
+    curl -sSfL "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${TAG}.tar.gz" -o "$ARCHIVE_FILE" 2>/dev/null || \
+    curl -sSfL "https://github.com/ggml-org/llama.cpp/archive/${TAG}.tar.gz" -o "$ARCHIVE_FILE" 2>/dev/null || true
+
+    if [ -s "$ARCHIVE_FILE" ]; then
+        ROOT_DIR=$(tar -tzf "$ARCHIVE_FILE" 2>/dev/null | head -n 1 | cut -d'/' -f1 || true)
+        if [ -n "$ROOT_DIR" ]; then
+            tar -xzf "$ARCHIVE_FILE" -C "$TMPDIR" --strip-components=1 "$ROOT_DIR/tools/ui" 2>/dev/null || true
+        fi
+        if [ ! -d "$TMPDIR/tools/ui" ]; then
+            tar -xzf "$ARCHIVE_FILE" -C "$TMPDIR" --strip-components=1 --wildcards "*/tools/ui" 2>/dev/null || true
+        fi
+    fi
 
     if [ -f "$TMPDIR/tools/ui/package-lock.json" ]; then
         NPM_HASH=""
