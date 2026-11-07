@@ -367,7 +367,7 @@ if (LLAMA_LLGUIDANCE)\
     customCudaCapabilities = config.cudaCapabilities or null;
     customRocmTargets = config.rocmTargets or null;
   };
-in {
+in lib.fix (self: {
   # --- Base Packages (Portable builds) ---
 
   # 1. Base CPU-only package
@@ -384,24 +384,24 @@ in {
 
   # --- Native-Optimized Packages ---
 
-  llama-cpp-cpu-native = withNativeCpu final.llama-cpp-cpu;
-  llama-cpp-vulkan-native = withNativeCpu final.llama-cpp-vulkan;
-  llama-cpp-cuda-native = withNativeCpu final.llama-cpp-cuda;
-  llama-cpp-rocm-native = withNativeCpu final.llama-cpp-rocm;
+  llama-cpp-cpu-native = withNativeCpu self.llama-cpp-cpu;
+  llama-cpp-vulkan-native = withNativeCpu self.llama-cpp-vulkan;
+  llama-cpp-cuda-native = withNativeCpu self.llama-cpp-cuda;
+  llama-cpp-rocm-native = withNativeCpu self.llama-cpp-rocm;
 
   # --- LLGuidance-Enabled Packages ---
 
-  llama-cpp-cpu-llguidance = withLlguidance final.llama-cpp-cpu;
-  llama-cpp-vulkan-llguidance = withLlguidance final.llama-cpp-vulkan;
-  llama-cpp-cuda-llguidance = withLlguidance final.llama-cpp-cuda;
-  llama-cpp-rocm-llguidance = withLlguidance final.llama-cpp-rocm;
+  llama-cpp-cpu-llguidance = withLlguidance self.llama-cpp-cpu;
+  llama-cpp-vulkan-llguidance = withLlguidance self.llama-cpp-vulkan;
+  llama-cpp-cuda-llguidance = withLlguidance self.llama-cpp-cuda;
+  llama-cpp-rocm-llguidance = withLlguidance self.llama-cpp-rocm;
 
   # --- Combined: Native + LLGuidance ---
 
-  llama-cpp-cpu-native-llguidance = withLlguidance final.llama-cpp-cpu-native;
-  llama-cpp-vulkan-native-llguidance = withLlguidance final.llama-cpp-vulkan-native;
-  llama-cpp-cuda-native-llguidance = withLlguidance final.llama-cpp-cuda-native;
-  llama-cpp-rocm-native-llguidance = withLlguidance final.llama-cpp-rocm-native;
+  llama-cpp-cpu-native-llguidance = withLlguidance self.llama-cpp-cpu-native;
+  llama-cpp-vulkan-native-llguidance = withLlguidance self.llama-cpp-vulkan-native;
+  llama-cpp-cuda-native-llguidance = withLlguidance self.llama-cpp-cuda-native;
+  llama-cpp-rocm-native-llguidance = withLlguidance self.llama-cpp-rocm-native;
 
   # --- Dual GPU Packages (CUDA + ROCm with dynamic backend loading) ---
 
@@ -413,13 +413,13 @@ in {
     rocmArchitectures = ["gfx906"];
   } (withSrc resolvedLlamaPackages.llama-cpp));
 
-  llama-cpp-dual-native = withNativeCpu final.llama-cpp-dual;
-  llama-cpp-dual-llguidance = withLlguidance final.llama-cpp-dual;
-  llama-cpp-dual-native-llguidance = withLlguidance final.llama-cpp-dual-native;
+  llama-cpp-dual-native = withNativeCpu self.llama-cpp-dual;
+  llama-cpp-dual-llguidance = withLlguidance self.llama-cpp-dual;
+  llama-cpp-dual-native-llguidance = withLlguidance self.llama-cpp-dual-native;
 
   # --- Sensible Dynamic Target and Helpers ---
 
   llama-cpp = customLlamaCpp;
   llama-cpp-ui = llama-cpp-ui;
   llguidance = llguidance;
-}
+})

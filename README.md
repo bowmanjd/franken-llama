@@ -55,6 +55,7 @@ Custom llama.cpp Nix flake with native CPU optimizations, llguidance support, an
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `acceleration` | enum | `"cpu"` | Backend: `cpu`, `cuda`, `rocm`, `vulkan`, `dual` |
+| `flavor` | enum | `"upstream"` | Source for `llama-cpp`: `upstream` (ggml-org) or `mx` (mx-llama.cpp fork) |
 | `nativeCpu` | bool | `true` | Optimize for host CPU instruction set |
 | `llguidance` | bool | `false` | Enable llguidance structured output |
 | `https` | bool | `true` | HTTPS support + embedded WebUI |
@@ -74,6 +75,7 @@ The overlay provides these package variants:
 - `*-native` variants with CPU optimization
 - `*-llguidance` variants with structured output
 - `*-native-llguidance` combined variants
+- `*-mx` variants of all of the above, built from the mx-llama.cpp fork (see below)
 
 ### Container Packages (x86_64-linux only)
 
@@ -158,6 +160,26 @@ services.franken-llama = {
 ```
 
 **Note**: For full gfx906 support with ROCm 6.4+, you may need patched ROCm libraries with gfx906 Tensile files (see [mixa3607/ML-gfx906](https://github.com/mixa3607/ML-gfx906) for container images with these patches)
+
+## mx-llama.cpp fork variants
+
+The `mx-llama-cpp` flake input is [mx-llama.cpp](https://github.com/mxxm-t/mx-llama.cpp), an upstream fork with gfx906 work. Every package is also available with an `-mx` suffix (for example `llama-cpp-dual-native-llguidance-mx`). Set `flavor = "mx"` in the module to make the default `llama-cpp` use it.
+
+What matters for a 3080 Ti + MI50 layer split running Qwen3.5/3.8 (qwen35 arch):
+
+- gfx906 weight repack for Q4_K, Q5_K, Q6_K, Q8_0, IQ4_NL, Q5_1, MXFP4 (MI50 only, on by default, `--no-repack` disables)
+- New gated-delta-net kernels, which also run on CUDA, so benchmark both GPUs
+- Recurrent snapshot ring for cheap MTP draft rollback, plus `LLAMA_ENABLE_MTP_OPT=1`
+- Quantized activation reuse (`GGML_CUDA_Q8_1_CACHE=0` disables)
+
+The tensor-parallel features (`-sm tensor`, `-tps`, custom AllReduce) need several same-vendor GPUs and do not apply to a mixed CUDA+ROCm pair. See `FEATURES.md` in the fork for details.
+
+Update the fork by editing the tag in the `mx-llama-cpp` input URL, then:
+
+```bash
+nix flake lock --update-input mx-llama-cpp
+nix build .#llama-cpp-ui-mx.npmDeps   # if it fails, copy the "got:" hash into mxNpmDepsHash in flake.nix
+```
 
 ## Maintenance
 

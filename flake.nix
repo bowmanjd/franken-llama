@@ -7,50 +7,77 @@
       url = "github:ggml-org/llama.cpp/v0.9.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Fork with gfx906 (MI50) kernel work, weight repack and MTP/delta-net speedups
+    mx-llama-cpp = {
+      url = "github:mxxm-t/mx-llama.cpp/b11757";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, llama-cpp }@inputs:
+  outputs = { self, nixpkgs, llama-cpp, mx-llama-cpp }@inputs:
     let
+      lib = nixpkgs.lib;
       supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      forAllSystems = lib.genAttrs supportedSystems;
+
+      # The fork's tools/ui lockfile differs from upstream's
+      mxNpmDepsHash = "sha256-hqYzdp1FwPhYkBP278fQXgY9NCKB6Q3P6Gko7BfP0m0=";
+
+      # Build the franken-llama package set from a given llama.cpp flake source
+      mkLlamaSet = srcFlake: configAttrs: final: prev:
+        let
+          upstream = srcFlake.overlays.default final prev;
+          custom = import ./llama-cpp-overlay.nix {
+            inputs = inputs // { llama-cpp = srcFlake; };
+            inherit lib;
+            config = configAttrs;
+            llamaPackages = upstream.llamaPackages;
+          } final prev;
+        in
+        { inherit upstream custom; };
+
+      # Source overrides only make sense for upstream, so drop them for the fork
+      mxConfig = configAttrs: configAttrs // {
+        llamaCppSrc = null;
+        llamaCppTag = null;
+        llamaCppHash = null;
+        npmDepsHash = mxNpmDepsHash;
+      };
+
+      markMx = pkg: pkg.overrideAttrs {
+        version = "mx-" + (mx-llama-cpp.shortRev or "unknown");
+        __intentionallyOverridingVersion = true;
+      };
+
+      # Every llama-cpp* package again, built from the fork, with an -mx suffix
+      mxVariants = mx: lib.mapAttrs' (name: pkg: lib.nameValuePair "${name}-mx" (markMx pkg))
+        (lib.filterAttrs (name: _: lib.hasPrefix "llama-cpp" name) mx);
+
+      mkOverlay = configAttrs: final: prev:
+        let
+          useMx = (configAttrs.flavor or "upstream") == "mx";
+          base = mkLlamaSet llama-cpp configAttrs final prev;
+          mx = (mkLlamaSet mx-llama-cpp (mxConfig configAttrs) final prev).custom;
+        in
+        base.upstream
+        // base.custom
+        // mxVariants mx
+        // lib.optionalAttrs useMx { llama-cpp = markMx mx.llama-cpp; };
+
+      basePackageNames = [
+        "llama-cpp-cpu" "llama-cpp-vulkan" "llama-cpp-cuda" "llama-cpp-rocm" "llama-cpp-dual"
+        "llama-cpp-cpu-native" "llama-cpp-vulkan-native" "llama-cpp-cuda-native" "llama-cpp-rocm-native" "llama-cpp-dual-native"
+        "llama-cpp-cpu-llguidance" "llama-cpp-vulkan-llguidance" "llama-cpp-cuda-llguidance" "llama-cpp-rocm-llguidance" "llama-cpp-dual-llguidance"
+        "llama-cpp-cpu-native-llguidance" "llama-cpp-vulkan-native-llguidance" "llama-cpp-cuda-native-llguidance"
+        "llama-cpp-rocm-native-llguidance" "llama-cpp-dual-native-llguidance"
+        "llama-cpp" "llama-cpp-ui"
+      ];
     in
     {
       # Expose overlays (default and configurable)
       overlays = {
-        # Default overlay (non-parameterized)
-        default = final: prev:
-          let
-            # Apply the upstream official overlay once
-            upstream = llama-cpp.overlays.default final prev;
-
-            # Pass llamaPackages to avoid redundant overlay evaluation
-            customOverlay = import ./llama-cpp-overlay.nix {
-              inputs = inputs // { llama-cpp = llama-cpp; };
-              lib = nixpkgs.lib;
-              config = {};
-              llamaPackages = upstream.llamaPackages;
-            };
-
-            customPackages = customOverlay final prev;
-          in
-          upstream // customPackages;
-
-        # Configurable overlay creator
-        configure = configAttrs: final: prev:
-          let
-            upstream = llama-cpp.overlays.default final prev;
-
-            # Pass llamaPackages to avoid redundant overlay evaluation
-            customOverlay = import ./llama-cpp-overlay.nix {
-              inputs = inputs // { llama-cpp = llama-cpp; };
-              lib = nixpkgs.lib;
-              config = configAttrs;
-              llamaPackages = upstream.llamaPackages;
-            };
-
-            customPackages = customOverlay final prev;
-          in
-          upstream // customPackages;
+        default = mkOverlay { };
+        configure = mkOverlay;
       };
 
       # Declarative NixOS module for easy multi-machine configuration
@@ -66,6 +93,16 @@
               type = lib.types.enum [ "cpu" "cuda" "rocm" "vulkan" "dual" ];
               default = "cpu";
               description = "Hardware acceleration backend for llama.cpp. Use 'dual' for combined CUDA + ROCm with dynamic backend loading.";
+            };
+
+            flavor = lib.mkOption {
+              type = lib.types.enum [ "upstream" "mx" ];
+              default = "upstream";
+              description = ''
+                Which llama.cpp to build the default `llama-cpp` package from: upstream
+                ggml-org, or the mx-llama.cpp fork (gfx906 repack and kernels, MTP and
+                delta-net speedups). The `-mx` variants are available either way.
+              '';
             };
 
             nativeCpu = lib.mkOption {
@@ -191,6 +228,7 @@
               (self.overlays.configure {
                 inherit (cfg)
                   acceleration
+                  flavor
                   nativeCpu
                   llguidance
                   https
@@ -283,31 +321,7 @@
             in "${version}-cuda${cuda}-sm${arch}";
           };
         in
-        {
-          inherit (pkgs)
-            llama-cpp-cpu
-            llama-cpp-vulkan
-            llama-cpp-cuda
-            llama-cpp-rocm
-            llama-cpp-dual
-            llama-cpp-cpu-native
-            llama-cpp-vulkan-native
-            llama-cpp-cuda-native
-            llama-cpp-rocm-native
-            llama-cpp-dual-native
-            llama-cpp-cpu-llguidance
-            llama-cpp-vulkan-llguidance
-            llama-cpp-cuda-llguidance
-            llama-cpp-rocm-llguidance
-            llama-cpp-dual-llguidance
-            llama-cpp-cpu-native-llguidance
-            llama-cpp-vulkan-native-llguidance
-            llama-cpp-cuda-native-llguidance
-            llama-cpp-rocm-native-llguidance
-            llama-cpp-dual-native-llguidance
-            llama-cpp
-            llama-cpp-ui;
-        }
+        lib.genAttrs (basePackageNames ++ map (name: "${name}-mx") basePackageNames) (name: pkgs.${name})
         # Container packages (x86_64-linux only)
         // nixpkgs.lib.optionalAttrs isLinuxX86 {
           # Slim packages (portable, no container)
