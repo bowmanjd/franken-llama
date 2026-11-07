@@ -172,6 +172,8 @@ What matters for a 3080 Ti + MI50 layer split running Qwen3.5/3.8 (qwen35 arch):
 - Recurrent snapshot ring for cheap MTP draft rollback, plus `LLAMA_ENABLE_MTP_OPT=1`
 - Quantized activation reuse (`GGML_CUDA_Q8_1_CACHE=0` disables)
 
+Measured on that setup (b11757, 2026-11-07): no gain over upstream `v0.9.0`. `smart` generation was 3-4% slower and prefill about 9% slower, repack and `LLAMA_ENABLE_MTP_OPT=1` did not help, and with defaults the q8_1 cache crashes the CUDA backend (`GGML_ASSERT` in `ggml_cuda_q8_1_cache_acquire`), so set `GGML_CUDA_Q8_1_CACHE=0` when a CUDA GPU is involved.
+
 The tensor-parallel features (`-sm tensor`, `-tps`, custom AllReduce) need several same-vendor GPUs and do not apply to a mixed CUDA+ROCm pair. See `FEATURES.md` in the fork for details.
 
 Update the fork by editing the tag in the `mx-llama-cpp` input URL, then:
