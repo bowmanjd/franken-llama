@@ -115,7 +115,7 @@
 
     src = uiSrc;
 
-    npmDepsHash = if config ? npmDepsHash && config.npmDepsHash != null then config.npmDepsHash else "sha256-XLtEZsSFdk+2SyfXzBp8HQ2e27PQPpDCn1YjePU1/9w=";
+    npmDepsHash = if config ? npmDepsHash && config.npmDepsHash != null then config.npmDepsHash else "sha256-3kJJJGgPvtoRozjjvXJ97ljxzt0tshwi88UUd1D3VsI=";
 
     npmBuildScript = "build";
 
