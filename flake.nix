@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     llama-cpp = {
-      url = "github:ggml-org/llama.cpp/b12632";
+      url = "github:ggml-org/llama.cpp/b12634";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -112,13 +112,13 @@
 
             llamaCppTag = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
-              default = "b12632";
+              default = "b12634";
               description = "Overridden Git tag/revision of llama.cpp to compile.";
             };
 
             llamaCppHash = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
-              default = "sha256-8OxpJVMO3Kq4h7yrm8YjOcXk9QhaZPZdzDA0scqyVv0=";
+              default = "sha256-lzKWST0ptk0iEC8D0bvIkfzoD4wbiZIAm8ivscH3RoU=";
               description = "Nix SHA256 hash for the overridden llamaCppTag.";
             };
 
