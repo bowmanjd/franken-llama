@@ -229,6 +229,14 @@ if (LLAMA_LLGUIDANCE)\
       ];
     });
 
+  # Ensure nvml.h is available for ggml-cuda.cu (upstream package.nix omits cuda_nvml_dev).
+  withCudaNvml = cudaPkgs: pkg:
+    if cudaPkgs != null && cudaPkgs ? cuda_nvml_dev then
+      pkg.overrideAttrs (old: {
+        buildInputs = (old.buildInputs or []) ++ [ cudaPkgs.cuda_nvml_dev ];
+      })
+    else pkg;
+
   # Helper function for dual GPU builds (CUDA + ROCm/HIP with dynamic backend loading)
   # This enables both backends to be loaded at runtime as separate .so files
   withDualGpu = {
@@ -246,6 +254,7 @@ if (LLAMA_LLGUIDANCE)\
       buildInputs = (old.buildInputs or [])
         # CUDA dependencies
         ++ [ cudaPkgs.cuda_cudart cudaPkgs.cuda_nvcc cudaPkgs.libcublas (cudaPkgs.cccl or cudaPkgs.cuda_cccl) ]
+        ++ lib.optional (cudaPkgs ? cuda_nvml_dev) cudaPkgs.cuda_nvml_dev
         # ROCm/HIP dependencies
         ++ [ rocmPkgs.clr rocmPkgs.hipblas rocmPkgs.rocblas ];
 
@@ -359,7 +368,7 @@ if (LLAMA_LLGUIDANCE)\
 
       # Apply architecture overrides for single-backend modes
       pkgWithAccel =
-        if accel == "cuda" then withCudaArch customCudaCapabilities basePkgWithAccel
+        if accel == "cuda" then withCudaArch customCudaCapabilities (withCudaNvml cudaPkgs basePkgWithAccel)
         else if accel == "rocm" then withRocmArch customRocmTargets basePkgWithAccel
         else basePkgWithAccel;
 
@@ -393,7 +402,7 @@ in {
   llama-cpp-vulkan = withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override { useVulkan = true; useRocm = false; useCuda = false; });
 
   # 3. Base CUDA-accelerated package
-  llama-cpp-cuda = withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useCuda = true; useRocm = false; useVulkan = false; } // (lib.optionalAttrs (resolvedCudaPackages != null) { cudaPackages = resolvedCudaPackages; })));
+  llama-cpp-cuda = withHttps (withCudaNvml resolvedCudaPackages ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useCuda = true; useRocm = false; useVulkan = false; } // (lib.optionalAttrs (resolvedCudaPackages != null) { cudaPackages = resolvedCudaPackages; }))));
 
   # 4. Base ROCm-accelerated package (with HIP_GRAPHS optimizations)
   llama-cpp-rocm = withRocmOptimizations resolvedRocmPackages (withHttps ((withSrc resolvedLlamaPackages.llama-cpp).override ({ useRocm = true; useCuda = false; useVulkan = false; } // (lib.optionalAttrs (resolvedRocmPackages != null) { rocmPackages = resolvedRocmPackages; }))));
