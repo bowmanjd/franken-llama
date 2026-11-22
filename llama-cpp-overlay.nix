@@ -32,7 +32,11 @@
     else
       null;
 
-  withSrc = pkg:
+  # Newer upstream package.nix builds its own UI from finalAttrs.webui, and that
+  # build fails in the sandbox. Hand it ours instead.
+  withSrc = pkg': let
+    pkg = if uiNewLayout then pkg'.overrideAttrs (_: { webui = llama-cpp-ui; }) else pkg';
+  in
     if llamaCppSrc != null then
       pkg.overrideAttrs (old: {
         src = llamaCppSrc;
@@ -99,12 +103,30 @@
     });
 
   # Compile the Web UI from source using the pinned llama-cpp input or custom source
-  llama-cpp-ui = prev.buildNpmPackage {
+  uiSrc = if llamaCppSrc != null then llamaCppSrc else inputs.llama-cpp;
+
+  # Newer llama.cpp keeps the UI in ui/apps/chat (compiling ui/lib/* from source);
+  # older tags keep it in tools/ui. Detect which one this source uses.
+  uiNewLayout = builtins.pathExists "${uiSrc}/ui/apps/chat/package.json";
+
+  llama-cpp-ui = prev.buildNpmPackage ({
     pname = "llama-cpp-ui";
     version = if config ? llamaCppTag && config.llamaCppTag != null then config.llamaCppTag else (inputs.llama-cpp.shortRev or "latest");
 
-    src = if llamaCppSrc != null then llamaCppSrc else inputs.llama-cpp;
+    src = uiSrc;
 
+    npmDepsHash = if config ? npmDepsHash && config.npmDepsHash != null then config.npmDepsHash else "sha256-XLtEZsSFdk+2SyfXzBp8HQ2e27PQPpDCn1YjePU1/9w=";
+
+    npmBuildScript = "build";
+
+    installPhase = ''
+      mkdir -p $out
+      cp -r dist/* $out/
+    '';
+  } // (if uiNewLayout then {
+    # The app reaches ../../lib/{ui,voice}, so build in place inside the full source tree.
+    sourceRoot = "source/ui/apps/chat";
+  } else {
     # Set sourceRoot to the path containing package-lock.json so fetchNpmDeps succeeds.
     sourceRoot = "source/tools/ui";
 
@@ -115,16 +137,10 @@
       cp -r /build/source/tools/ui /build/ui-build/tools/
       sourceRoot="/build/ui-build/tools/ui"
     '';
+  }));
 
-    npmDepsHash = if config ? npmDepsHash && config.npmDepsHash != null then config.npmDepsHash else "sha256-XLtEZsSFdk+2SyfXzBp8HQ2e27PQPpDCn1YjePU1/9w=";
-
-    npmBuildScript = "build";
-
-    installPhase = ''
-      mkdir -p $out
-      cp -r dist/* $out/
-    '';
-  };
+  # Where llama.cpp's CMake picks up a prebuilt UI, relative to the source root
+  uiDistDir = if uiNewLayout then "ui/apps/chat/dist" else "build/tools/ui/dist";
 
   # Helper function to enable HTTPS support and embed the WebUI built from source
   withHttps = pkg:
@@ -137,8 +153,8 @@
         "-DLLAMA_BUILD_UI=ON"
       ];
       preConfigure = (old.preConfigure or "") + ''
-        mkdir -p build/tools/ui/dist
-        cp -r ${llama-cpp-ui}/* build/tools/ui/dist/
+        mkdir -p ${uiDistDir}
+        cp -r ${llama-cpp-ui}/* ${uiDistDir}/
       '';
     });
 

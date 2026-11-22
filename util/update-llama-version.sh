@@ -71,32 +71,37 @@ if [ -f "$OVERLAY" ]; then
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
 
-    # Download archive and extract tools/ui directory
+    # Newer tags keep the UI in ui/apps/chat; older ones in tools/ui
+    UI_DIRS=("ui/apps/chat" "tools/ui")
+
     ARCHIVE_FILE="$TMPDIR/archive.tar.gz"
     curl -sSfL "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${TAG}.tar.gz" -o "$ARCHIVE_FILE" 2>/dev/null || \
     curl -sSfL "https://github.com/ggml-org/llama.cpp/archive/${TAG}.tar.gz" -o "$ARCHIVE_FILE" 2>/dev/null || true
 
+    LOCK_FILE=""
     if [ -s "$ARCHIVE_FILE" ]; then
         ROOT_DIR=$(tar -tzf "$ARCHIVE_FILE" 2>/dev/null | head -n 1 | cut -d'/' -f1 || true)
-        if [ -n "$ROOT_DIR" ]; then
-            tar -xzf "$ARCHIVE_FILE" -C "$TMPDIR" --strip-components=1 "$ROOT_DIR/tools/ui" 2>/dev/null || true
-        fi
-        if [ ! -d "$TMPDIR/tools/ui" ]; then
-            tar -xzf "$ARCHIVE_FILE" -C "$TMPDIR" --strip-components=1 --wildcards "*/tools/ui" 2>/dev/null || true
-        fi
+        for dir in "${UI_DIRS[@]}"; do
+            tar -xzf "$ARCHIVE_FILE" -C "$TMPDIR" --strip-components=1 "$ROOT_DIR/$dir/package-lock.json" 2>/dev/null || true
+            if [ -f "$TMPDIR/$dir/package-lock.json" ]; then
+                LOCK_FILE="$TMPDIR/$dir/package-lock.json"
+                echo "Web UI found in $dir"
+                break
+            fi
+        done
     fi
 
-    if [ -f "$TMPDIR/tools/ui/package-lock.json" ]; then
+    if [ -n "$LOCK_FILE" ]; then
         NPM_HASH=""
 
         # Use prefetch-npm-deps if available
         if command -v prefetch-npm-deps &> /dev/null; then
-            NPM_HASH=$(prefetch-npm-deps "$TMPDIR/tools/ui/package-lock.json" 2>/dev/null || true)
+            NPM_HASH=$(prefetch-npm-deps "$LOCK_FILE" 2>/dev/null || true)
         fi
 
         # Fallback: use nix-prefetch-npm-deps from nixpkgs
         if [ -z "$NPM_HASH" ] || [ "$NPM_HASH" = "null" ]; then
-            NPM_HASH=$(nix run nixpkgs#prefetch-npm-deps -- "$TMPDIR/tools/ui/package-lock.json" 2>/dev/null || true)
+            NPM_HASH=$(nix run nixpkgs#prefetch-npm-deps -- "$LOCK_FILE" 2>/dev/null || true)
         fi
 
         if [ -n "$NPM_HASH" ] && [ "$NPM_HASH" != "null" ]; then
@@ -108,7 +113,7 @@ if [ -f "$OVERLAY" ]; then
             echo "Build once to get the correct hash from the error message." >&2
         fi
     else
-        echo "Warning: tools/ui/package-lock.json not found in release" >&2
+        echo "Warning: web UI package-lock.json not found in release (looked in ${UI_DIRS[*]})" >&2
     fi
 fi
 
