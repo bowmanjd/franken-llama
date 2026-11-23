@@ -18,10 +18,17 @@
     if llamaPackages != null then llamaPackages
     else (inputs.llama-cpp.overlays.default final prev).llamaPackages;
 
+  useUnslothInkling2 = config.unslothInkling2 or false;
+
   # 1. Source and Version Overrides
   llamaCppSrc =
     if config ? llamaCppSrc && config.llamaCppSrc != null then
       config.llamaCppSrc
+    else if useUnslothInkling2 then
+      prev.fetchzip {
+        url = "https://github.com/unslothai/llama.cpp/releases/download/b12631-mix-acc0843/llama.cpp-source-b12631-mix-acc0843.tar.gz";
+        hash = "sha256-4tHtDEF9KgYauoumnA6wZXVjRvYhMkBlaOULEg031Bo=";
+      }
     else if config ? llamaCppTag && config.llamaCppTag != null && config ? llamaCppHash && config.llamaCppHash != null then
       prev.fetchFromGitHub {
         owner = "ggml-org";
@@ -32,19 +39,31 @@
     else
       null;
 
+  llamaCppPatches =
+    (lib.optional useUnslothInkling2 ./patches/unsloth-b12631-inkling2-speed.patch)
+    ++ (config.llamaCppPatches or []);
+
   # Newer upstream package.nix builds its own UI from finalAttrs.webui, and that
   # build fails in the sandbox. Hand it ours instead.
   withSrc = pkg': let
     pkg = if uiNewLayout then pkg'.overrideAttrs (_: { webui = llama-cpp-ui; }) else pkg';
   in
-    if llamaCppSrc != null then
-      pkg.overrideAttrs (old: {
-        src = llamaCppSrc;
-        version =
-          if config ? llamaCppTag && config.llamaCppTag != null
-          then config.llamaCppTag
-          else old.version + "-custom";
-      })
+    if llamaCppSrc != null || llamaCppPatches != [] then
+      pkg.overrideAttrs (old:
+        (lib.optionalAttrs (llamaCppSrc != null) {
+          src = llamaCppSrc;
+          version =
+            if useUnslothInkling2 then
+              "b12631-mix-acc0843-ink2speed"
+            else if config ? llamaCppTag && config.llamaCppTag != null then
+              config.llamaCppTag
+            else
+              old.version + "-custom";
+        })
+        // (lib.optionalAttrs (llamaCppPatches != []) {
+          patches = (old.patches or []) ++ llamaCppPatches;
+        })
+      )
     else
       pkg;
 

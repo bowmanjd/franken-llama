@@ -128,6 +128,14 @@
               description = "Custom pre-fetched source package to compile llama.cpp from.";
             };
 
+            llamaCppPatches = lib.mkOption {
+              type = lib.types.listOf lib.types.path;
+              default = [];
+              description = "Additional patch files applied to the llama.cpp source tree.";
+            };
+
+            unslothInkling2 = lib.mkEnableOption "Use Unsloth b12631-mix-acc0843 source with fused Inkling-2 CUDA/HIP kernels and gfx906 HIP guard";
+
             npmDepsHash = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
@@ -201,6 +209,8 @@
                   llamaCppTag
                   llamaCppHash
                   llamaCppSrc
+                  llamaCppPatches
+                  unslothInkling2
                   npmDepsHash
                   cudaVersion
                   cudaPkgAttr
